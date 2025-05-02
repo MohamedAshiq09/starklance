@@ -1,37 +1,25 @@
 #[starknet::contract]
 mod FreelanceMarketplace {
-    use starknet::get_caller_address;
-    use starknet::ContractAddress;
-    use starknet::contract_address_const;
-    use starknet::get_block_timestamp;
-    use starknet::class_hash::ClassHash;
+    use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
+    use starknet::storage::{Map, StoragePathEntry, Mutable};
     use starknet::contract_address::ContractAddressZeroable;
-    use zeroable::Zeroable;
-    use traits::Into;
-    use traits::TryInto;
-    use option::OptionTrait;
-    use array::ArrayTrait;
-    use box::BoxTrait;
-    use integer::u256_from_felt252;
-    use starknet::{Store, SyscallResultTrait};
-
-    // Required for IERC20 interactions
+    use core::num::traits::Zero;
+    use core::traits::{Into, TryInto};
+    use core::option::OptionTrait;
     use openzeppelin::token::erc20::interface::{
         IERC20, IERC20Dispatcher, IERC20DispatcherTrait
     };
 
-    // Job status enum
     #[derive(Copy, Drop, Serde, starknet::Store)]
     enum JobStatus {
-        Open: (),
-        Assigned: (),
-        Submitted: (),
-        Disputed: (),
-        Completed: (),
-        Cancelled: ()
+        Open,
+        Assigned,
+        Submitted,
+        Disputed,
+        Completed,
+        Cancelled
     }
 
-    // Job struct
     #[derive(Copy, Drop, Serde, starknet::Store)]
     struct Job {
         id: u256,
@@ -44,20 +32,18 @@ mod FreelanceMarketplace {
         created_at: u64
     }
 
-    // Storage
     #[storage]
     struct Storage {
         next_job_id: u256,
-        jobs: LegacyMap::<u256, Job>,
-        client_jobs: LegacyMap::<(ContractAddress, u256), bool>,
-        freelancer_jobs: LegacyMap::<(ContractAddress, u256), bool>,
+        jobs: Map<u256, Job>,
+        client_jobs: Map<(ContractAddress, u256), bool>,
+        freelancer_jobs: Map<(ContractAddress, u256), bool>,
         platform_fee_bps: u16,
         platform_wallet: ContractAddress,
         payment_token: ContractAddress,
         owner: ContractAddress
     }
 
-    // Events
     #[event]
     #[derive(Drop, starknet::Event)]
     enum Event {
@@ -132,17 +118,16 @@ mod FreelanceMarketplace {
         new_owner: ContractAddress
     }
 
-    // Error codes
-    mod Errors {
-        const INVALID_JOB_ID: felt252 = 'Invalid job ID';
-        const INVALID_STATUS: felt252 = 'Invalid job status';
-        const UNAUTHORIZED: felt252 = 'Unauthorized caller';
-        const DEADLINE_PASSED: felt252 = 'Deadline has passed';
-        const ONLY_OWNER: felt252 = 'Only owner can call';
-        const INVALID_AMOUNT: felt252 = 'Invalid payment amount';
-        const ALREADY_ASSIGNED: felt252 = 'Job already assigned';
-        const SAME_ADDRESS: felt252 = 'Same address for client/worker';
-        const PAYMENT_FAILED: felt252 = 'Payment transfer failed';
+    pub mod Errors {
+        pub const INVALID_JOB_ID: felt252 = 'Invalid job ID';
+        pub const INVALID_STATUS: felt252 = 'Invalid job status';
+        pub const UNAUTHORIZED: felt252 = 'Unauthorized caller';
+        pub const DEADLINE_PASSED: felt252 = 'Deadline has passed';
+        pub const ONLY_OWNER: felt252 = 'Only owner can call';
+        pub const INVALID_AMOUNT: felt252 = 'Invalid payment amount';
+        pub const ALREADY_ASSIGNED: felt252 = 'Job already assigned';
+        pub const SAME_ADDRESS: felt252 = 'Same address for client/worker';
+        pub const PAYMENT_FAILED: felt252 = 'Payment transfer failed';
     }
 
     #[constructor]
@@ -160,7 +145,7 @@ mod FreelanceMarketplace {
         self.platform_wallet.write(platform_wallet);
     }
 
-    #[external(v0)]
+    #[abi(embed_v0)]
     impl FreelanceMarketplaceImpl of super::IFreelanceMarketplace<ContractState> {
         fn create_job(
             ref self: ContractState,
@@ -177,17 +162,17 @@ mod FreelanceMarketplace {
 
             let job = Job {
                 id: job_id,
-                client: client,
+                client,
                 freelancer: ContractAddressZeroable::zero(),
-                payment_amount: payment_amount,
-                deadline: deadline,
-                status: JobStatus::Open(()),
-                description: description,
+                payment_amount,
+                deadline,
+                status: JobStatus::Open,
+                description,
                 created_at: current_time
             };
 
-            self.jobs.write(job_id, job);
-            self.client_jobs.write((client, job_id), true);
+            self.jobs.entry(job_id).write(job);
+            self.client_jobs.entry((client, job_id)).write(true);
             self.next_job_id.write(job_id + 1);
 
             let payment_token = IERC20Dispatcher { contract_address: self.payment_token.read() };
@@ -198,53 +183,46 @@ mod FreelanceMarketplace {
             );
             assert(success, Errors::PAYMENT_FAILED);
 
-            self.emit(JobCreated {
-                job_id: job_id,
-                client: client,
-                payment_amount: payment_amount,
-                deadline: deadline,
-                description: description
-            });
-
+            self.emit(JobCreated { job_id, client, payment_amount, deadline, description });
             job_id
         }
 
         fn apply_for_job(ref self: ContractState, job_id: u256) {
             let freelancer = get_caller_address();
-            let mut job = self.jobs.read(job_id);
+            let mut job = self.jobs.entry(job_id).read();
 
-            assert(job.id.is_non_zero(), Errors::INVALID_JOB_ID);
-            assert(job.status == JobStatus::Open(()), Errors::INVALID_STATUS);
+            assert(job.id != 0, Errors::INVALID_JOB_ID);
+            assert(job.status == JobStatus::Open, Errors::INVALID_STATUS);
             assert(freelancer != job.client, Errors::SAME_ADDRESS);
 
             job.freelancer = freelancer;
-            job.status = JobStatus::Assigned(());
-            self.jobs.write(job_id, job);
-            self.freelancer_jobs.write((freelancer, job_id), true);
+            job.status = JobStatus::Assigned;
+            self.jobs.entry(job_id).write(job);
+            self.freelancer_jobs.entry((freelancer, job_id)).write(true);
 
-            self.emit(JobAssigned { job_id: job_id, freelancer: freelancer });
+            self.emit(JobAssigned { job_id, freelancer });
         }
 
         fn submit_work(ref self: ContractState, job_id: u256) {
             let freelancer = get_caller_address();
-            let mut job = self.jobs.read(job_id);
+            let mut job = self.jobs.entry(job_id).read();
 
-            assert(job.id.is_non_zero(), Errors::INVALID_JOB_ID);
-            assert(job.status == JobStatus::Assigned(()), Errors::INVALID_STATUS);
+            assert(job.id != 0, Errors::INVALID_JOB_ID);
+            assert(job.status == JobStatus::Assigned, Errors::INVALID_STATUS);
             assert(job.freelancer == freelancer, Errors::UNAUTHORIZED);
 
-            job.status = JobStatus::Submitted(());
-            self.jobs.write(job_id, job);
+            job.status = JobStatus::Submitted;
+            self.jobs.entry(job_id).write(job);
 
-            self.emit(WorkSubmitted { job_id: job_id, freelancer: freelancer });
+            self.emit(WorkSubmitted { job_id, freelancer });
         }
 
         fn approve_work(ref self: ContractState, job_id: u256) {
             let client = get_caller_address();
-            let mut job = self.jobs.read(job_id);
+            let mut job = self.jobs.entry(job_id).read();
 
-            assert(job.id.is_non_zero(), Errors::INVALID_JOB_ID);
-            assert(job.status == JobStatus::Submitted(()), Errors::INVALID_STATUS);
+            assert(job.id != 0, Errors::INVALID_JOB_ID);
+            assert(job.status == JobStatus::Submitted, Errors::INVALID_STATUS);
             assert(job.client == client, Errors::UNAUTHORIZED);
 
             let platform_fee = (job.payment_amount * self.platform_fee_bps.read().into()) / 10000;
@@ -257,34 +235,27 @@ mod FreelanceMarketplace {
             }
             assert(payment_token.transfer(job.freelancer, freelancer_payment), Errors::PAYMENT_FAILED);
 
-            job.status = JobStatus::Completed(());
-            self.jobs.write(job_id, job);
+            job.status = JobStatus::Completed;
+            self.jobs.entry(job_id).write(job);
 
-            self.emit(JobCompleted {
-                job_id: job_id,
-                client: client,
-                freelancer: job.freelancer,
-                payment_amount: job.payment_amount
-            });
+            self.emit(JobCompleted { job_id, client, freelancer: job.freelancer, payment_amount: job.payment_amount });
         }
 
         fn dispute_job(ref self: ContractState, job_id: u256, reason: felt252) {
             let caller = get_caller_address();
-            let mut job = self.jobs.read(job_id);
+            let mut job = self.jobs.entry(job_id).read();
 
-            assert(job.id.is_non_zero(), Errors::INVALID_JOB_ID);
-            let is_valid_status = match job.status {
-                JobStatus::Assigned(_) => true,
-                JobStatus::Submitted(_) => true,
-                _ => false
-            };
-            assert(is_valid_status, Errors::INVALID_STATUS);
+            assert(job.id != 0, Errors::INVALID_JOB_ID);
+            assert(
+                job.status == JobStatus::Assigned || job.status == JobStatus::Submitted,
+                Errors::INVALID_STATUS
+            );
             assert(caller == job.client || caller == job.freelancer, Errors::UNAUTHORIZED);
 
-            job.status = JobStatus::Disputed(());
-            self.jobs.write(job_id, job);
+            job.status = JobStatus::Disputed;
+            self.jobs.entry(job_id).write(job);
 
-            self.emit(JobDisputed { job_id: job_id, disputer: caller, reason: reason });
+            self.emit(JobDisputed { job_id, disputer: caller, reason });
         }
 
         fn resolve_dispute(
@@ -294,10 +265,10 @@ mod FreelanceMarketplace {
             freelancer_percent: u16
         ) {
             assert(get_caller_address() == self.owner.read(), Errors::ONLY_OWNER);
-            let mut job = self.jobs.read(job_id);
+            let mut job = self.jobs.entry(job_id).read();
 
-            assert(job.id.is_non_zero(), Errors::INVALID_JOB_ID);
-            assert(job.status == JobStatus::Disputed(()), Errors::INVALID_STATUS);
+            assert(job.id != 0, Errors::INVALID_JOB_ID);
+            assert(job.status == JobStatus::Disputed, Errors::INVALID_STATUS);
             assert(client_percent + freelancer_percent <= 10000, 'Invalid percentages');
 
             let payment_token = IERC20Dispatcher { contract_address: self.payment_token.read() };
@@ -321,11 +292,11 @@ mod FreelanceMarketplace {
                 assert(payment_token.transfer(self.platform_wallet.read(), remaining), Errors::PAYMENT_FAILED);
             }
 
-            job.status = JobStatus::Completed(());
-            self.jobs.write(job_id, job);
+            job.status = JobStatus::Completed;
+            self.jobs.entry(job_id).write(job);
 
             self.emit(JobCompleted {
-                job_id: job_id,
+                job_id,
                 client: job.client,
                 freelancer: job.freelancer,
                 payment_amount: job.payment_amount
@@ -334,19 +305,19 @@ mod FreelanceMarketplace {
 
         fn cancel_job(ref self: ContractState, job_id: u256) {
             let client = get_caller_address();
-            let mut job = self.jobs.read(job_id);
+            let mut job = self.jobs.entry(job_id).read();
 
-            assert(job.id.is_non_zero(), Errors::INVALID_JOB_ID);
-            assert(job.status == JobStatus::Open(()), Errors::INVALID_STATUS);
+            assert(job.id != 0, Errors::INVALID_JOB_ID);
+            assert(job.status == JobStatus::Open, Errors::INVALID_STATUS);
             assert(job.client == client, Errors::UNAUTHORIZED);
 
             let payment_token = IERC20Dispatcher { contract_address: self.payment_token.read() };
             assert(payment_token.transfer(client, job.payment_amount), Errors::PAYMENT_FAILED);
 
-            job.status = JobStatus::Cancelled(());
-            self.jobs.write(job_id, job);
+            job.status = JobStatus::Cancelled;
+            self.jobs.entry(job_id).write(job);
 
-            self.emit(JobCancelled { job_id: job_id, reason: 'Cancelled by client' });
+            self.emit(JobCancelled { job_id, reason: 'Cancelled by client' });
         }
 
         fn update_platform_fee(ref self: ContractState, new_fee_bps: u16) {
@@ -357,7 +328,7 @@ mod FreelanceMarketplace {
 
         fn update_platform_wallet(ref self: ContractState, new_wallet: ContractAddress) {
             assert(get_caller_address() == self.owner.read(), Errors::ONLY_OWNER);
-            assert(new_wallet.is_non_zero(), 'Zero address not allowed');
+            assert(!new_wallet.is_zero(), 'Zero address not allowed');
             self.platform_wallet.write(new_wallet);
         }
 
@@ -365,17 +336,14 @@ mod FreelanceMarketplace {
             let caller = get_caller_address();
             let current_owner = self.owner.read();
             assert(caller == current_owner, Errors::ONLY_OWNER);
-            assert(new_owner.is_non_zero(), 'Zero address not allowed');
+            assert(!new_owner.is_zero(), 'Zero address not allowed');
             
             self.owner.write(new_owner);
-            self.emit(OwnershipTransferred {
-                previous_owner: current_owner,
-                new_owner: new_owner
-            });
+            self.emit(OwnershipTransferred { previous_owner: current_owner, new_owner });
         }
 
         fn get_job(self: @ContractState, job_id: u256) -> Job {
-            self.jobs.read(job_id)
+            self.jobs.entry(job_id).read()
         }
 
         fn get_platform_fee(self: @ContractState) -> u16 {
@@ -400,7 +368,7 @@ trait IFreelanceMarketplace<TContractState> {
     fn update_platform_fee(ref self: TContractState, new_fee_bps: u16);
     fn update_platform_wallet(ref self: TContractState, new_wallet: ContractAddress);
     fn transfer_ownership(ref self: TContractState, new_owner: ContractAddress);
-    fn get_job(self: @TContractState, job_id: u256) -> Job;
+    fn get_job(self: @TContractState, job_id: u256) -> FreelanceMarketplace::Job;
     fn get_platform_fee(self: @TContractState) -> u16;
     fn get_owner(self: @TContractState) -> ContractAddress;
 }
