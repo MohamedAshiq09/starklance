@@ -1,3 +1,3 @@
-mod marketplace;
-mod interfaces;
 mod models;
+mod interfaces;
+mod marketplace;

@@ -1,5 +1,5 @@
 use starknet::ContractAddress;
-use freelance_marketplace::models::{Job, JobStatus};
+use project::models::{Job, JobStatus};
 
 #[starknet::interface]
 trait IFreelanceMarketplace<TContractState> {
@@ -16,13 +16,4 @@ trait IFreelanceMarketplace<TContractState> {
     fn get_job(self: @TContractState, job_id: u256) -> Job;
     fn get_platform_fee(self: @TContractState) -> u16;
     fn get_owner(self: @TContractState) -> ContractAddress;
-}
-
-// ERC20 interface for payment token
-#[starknet::interface]
-trait IERC20<TContractState> {
-    fn balanceOf(self: @TContractState, account: ContractAddress) -> u256;
-    fn transfer(ref self: TContractState, recipient: ContractAddress, amount: u256) -> bool;
-    fn approve(ref self: TContractState, spender: ContractAddress, amount: u256) -> bool;
-    fn transferFrom(ref self: TContractState, sender: ContractAddress, recipient: ContractAddress, amount: u256) -> bool;
 }

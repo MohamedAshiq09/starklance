@@ -1,24 +1,21 @@
-use starknet::ContractAddress;
-
-#[derive(drop , copy , serde , starknet::store)]
+#[derive(Copy, Drop, Serde, starknet::Store)]
 enum JobStatus {
-    open,
-    assigned,
-    submitted,
-    disputed,
-    completed, 
-    cancelled
+    Open,
+    Assigned,
+    Submitted,
+    Disputed,
+    Completed,
+    Cancelled
 }
 
-#[derive(drop , copy , serde , starknet::store)]
-struct Job{
+#[derive(Copy, Drop, Serde, starknet::Store)]
+struct Job {
     id: u256,
-    client: ContractAddress,
-    freelancer: ContractAddress,
+    client: starknet::ContractAddress,
+    freelancer: starknet::ContractAddress,
     payment_amount: u256,
     deadline: u64,
     status: JobStatus,
     description: felt252,
     created_at: u64
-} 
-
+}

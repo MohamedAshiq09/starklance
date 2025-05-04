@@ -10,35 +10,15 @@ mod FreelanceMarketplace {
     use openzeppelin::token::erc20::interface::{
         IERC20, IERC20Dispatcher, IERC20DispatcherTrait
     };
-
-    #[derive(Copy, Drop, Serde, starknet::Store)]
-    enum JobStatus {
-        Open,
-        Assigned,
-        Submitted,
-        Disputed,
-        Completed,
-        Cancelled
-    }
-
-    #[derive(Copy, Drop, Serde, starknet::Store)]
-    struct Job {
-        id: u256,
-        client: ContractAddress,
-        freelancer: ContractAddress,
-        payment_amount: u256,
-        deadline: u64,
-        status: JobStatus,
-        description: felt252,
-        created_at: u64
-    }
+    use project::interfaces::IFreelanceMarketplace;
+    use project::models::{Job, JobStatus};
 
     #[storage]
     struct Storage {
         next_job_id: u256,
-        jobs: LegacyMap::<u256, Job>,
-        client_jobs: LegacyMap::<(ContractAddress, u256), bool>,
-        freelancer_jobs: LegacyMap::<(ContractAddress, u256), bool>,
+        jobs: Map<u256, Job>,
+        client_jobs: Map<(ContractAddress, u256), bool>,
+        freelancer_jobs: Map<(ContractAddress, u256), bool>,
         platform_fee_bps: u16,
         platform_wallet: ContractAddress,
         payment_token: ContractAddress,
@@ -146,8 +126,8 @@ mod FreelanceMarketplace {
         self.platform_wallet.write(platform_wallet);
     }
 
-    #[abi(embed_v0)]
-    impl FreelanceMarketplaceImpl of super::IFreelanceMarketplace<ContractState> {
+    #[external(v0)]
+    impl FreelanceMarketplaceImpl of IFreelanceMarketplace<ContractState> {
         fn create_job(
             ref self: ContractState,
             payment_amount: u256,
@@ -164,7 +144,7 @@ mod FreelanceMarketplace {
             let job = Job {
                 id: job_id,
                 client,
-                freelancer: ContractAddressZeroable::zero(),
+                freelancer: ContractAddress::zero(),
                 payment_amount,
                 deadline,
                 status: JobStatus::Open,
@@ -366,21 +346,4 @@ mod FreelanceMarketplace {
             self.owner.read()
         }
     }
-}
-
-#[starknet::interface]
-trait IFreelanceMarketplace<TContractState> {
-    fn create_job(ref self: TContractState, payment_amount: u256, deadline: u64, description: felt252) -> u256;
-    fn apply_for_job(ref self: TContractState, job_id: u256);
-    fn submit_work(ref self: TContractState, job_id: u256);
-    fn approve_work(ref self: TContractState, job_id: u256);
-    fn dispute_job(ref self: TContractState, job_id: u256, reason: felt252);
-    fn resolve_dispute(ref self: TContractState, job_id: u256, client_percent: u16, freelancer_percent: u16);
-    fn cancel_job(ref self: TContractState, job_id: u256);
-    fn update_platform_fee(ref self: TContractState, new_fee_bps: u16);
-    fn update_platform_wallet(ref self: TContractState, new_wallet: ContractAddress);
-    fn transfer_ownership(ref self: TContractState, new_owner: ContractAddress);
-    fn get_job(self: @TContractState, job_id: u256) -> FreelanceMarketplace::Job;
-    fn get_platform_fee(self: @TContractState) -> u16;
-    fn get_owner(self: @TContractState) -> ContractAddress;
 }
