@@ -1,5 +1,5 @@
 #[starknet::contract]
-mod FreelanceMarketplace {
+pub mod FreelanceMarketplace {
     use starknet::{ContractAddress, get_caller_address, get_block_timestamp, get_contract_address};
     use starknet::class_hash::ClassHash;
     use starknet::storage_access::StorageBaseAddress;
@@ -10,15 +10,15 @@ mod FreelanceMarketplace {
     use openzeppelin::token::erc20::interface::{
         IERC20, IERC20Dispatcher, IERC20DispatcherTrait
     };
-    use project::interfaces::IFreelanceMarketplace;
-    use project::models::{Job, JobStatus};
+    use super::interfaces::IFreelanceMarketplace;
+    use super::models::{Job, JobStatus};
 
     #[storage]
     struct Storage {
         next_job_id: u256,
-        jobs: Map<u256, Job>,
-        client_jobs: Map<(ContractAddress, u256), bool>,
-        freelancer_jobs: Map<(ContractAddress, u256), bool>,
+        jobs: LegacyMap<u256, Job>,
+        client_jobs: LegacyMap<(ContractAddress, u256), bool>,
+        freelancer_jobs: LegacyMap<(ContractAddress, u256), bool>,
         platform_fee_bps: u16,
         platform_wallet: ContractAddress,
         payment_token: ContractAddress,
@@ -126,7 +126,7 @@ mod FreelanceMarketplace {
         self.platform_wallet.write(platform_wallet);
     }
 
-    #[external(v0)]
+    #[abi(embed_v0)]
     impl FreelanceMarketplaceImpl of IFreelanceMarketplace<ContractState> {
         fn create_job(
             ref self: ContractState,
